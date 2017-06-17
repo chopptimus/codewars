@@ -1,57 +1,58 @@
 import re
 from collections import namedtuple
+from operator import add, sub, mul, floordiv, mod, lt, eq
 
-Command = namedtuple('Command', ['instruction', 'param'])
+Command = namedtuple('Command', ['instruction', 'params'])
+Instruction = namedtuple('Instruction', ['name', 'params'])
 
 COMMANDS = {
     'stack': {
-        's':  (stack_push, 'num'),
-        'ts': (stack_dup, 'num'),
-        'tn': (stack_dis, None),
-        'ns': (stack_dup_top, None),
-        'nt': (stack_swap, None),
-        'nn': (stack_dis_top, None)},
+        's':  Instruction('push', ['num']),
+        'ts': Instruction('ref', ['num']),
+        'tn': Instruction('slide', ['num']),
+        'ns': Instruction('duplicate', []),
+        'nt': Instruction('swap', []),
+        'nn': Instruction('discard', [])},
     'math': {
-        'ss': (math_add, None),
-        'st': (math_sub, None),
-        'sn': (math_mul, None),
-        'ts': (math_div, None),
-        'tt': (math_mod, None)},
+        'ss': Instruction('infix', [add]),
+        'st': Instruction('infix', [sub]),
+        'sn': Instruction('infix', [mul]),
+        'ts': Instruction('infix', [floordiv]),
+        'tt': Instruction('infix', [mod])},
     'heap': {
-        's': (heap_store, None)  ,
-        't': (heap_store, None)} ,
+        's': Instruction('store', []),
+        't': Instruction('retrieve', [])},
     'io': {
-        'ss': (io_ochar, None),
-        'st': (io_onum, None),
-        'ts': (io_ichar, None),
-        'tt': (io_inum, None)},
+        'ss': Instruction('output_char', []),
+        'st': Instruction('output_num', []),
+        'ts': Instruction('read_char', []),
+        'tt': Instruction('read_num', [])},
     'flow': {
-        'ss': (flow_mark, 'lab'),
-        'st': (flow_call, 'lab'),
-        'sn': (flow_jump, 'lab'),
-        'ts': (flow_pop_eq, 'lab'),
-        'tt': (flow_pop_lt, 'lab'),
-        'tn': (flow_return, None),
-        'nn': (flow_exit, None)}
+        'ss': Instruction('mark', ['lab']),
+        'st': Instruction('call', ['lab']),
+        'sn': Instruction('jump', ['lab']),
+        'ts': Instruction('if_', ['lab', eq]),
+        'tt': Instruction('if_', ['lab', lt]),
+        'tn': Instruction('return_', []),
+        'nn': Instruction('exit', [])}
     }
 
 class Parser:
     def __init__(self, tokens):
+        self.original = list(tokens)
         self.tokens = tokens
 
     def parse(self):
         while self.tokens:
             yield self.parse_command()
-        return commands
 
     def consume(self, expected):
         actual = self.tokens[:len(expected)]
         self.tokens = self.tokens[len(expected):]
 
         if actual != expected:
-            print(self.tokens)
-            raise ValueError('expected {} but found {} instead'.format(
-                             expected, actual))
+            raise SyntaxError('expected {} but found {} instead, in {}'.format(
+                             expected, actual, ''.join(self.original)))
 
     def peek(self, expected):
         actual = self.tokens[:len(expected)]
@@ -65,17 +66,18 @@ class Parser:
 
     def parse_command(self):
         imp_type = self.parse_imp()
-        print(imp_type)
         commands =  COMMANDS[imp_type]
-        for sequence, (function, param_type) in commands.items():
+        for sequence, instruction in commands.items():
             if self.peek_consume(sequence):
-                if param_type == 'num':
-                    param = self.parse_number()
-                elif param_type == 'lab':
-                    param = self.parse_label() 
-                else:
-                    param = None
-                return function, param
+                params = []
+                for pt in instruction.params:
+                    if pt == 'num':
+                        params.append(self.parse_number())
+                    elif pt == 'lab':
+                        params.append(self.parse_label())
+                    else:
+                        params.append(pt)
+                return Command(instruction.name, params)
 
     def parse_imp(self):
         if self.peek_consume('s'):
@@ -96,7 +98,7 @@ class Parser:
         while not self.peek('n'):
             number = (number << 1) + self.parse_digit()
         self.consume('n')
-        return number
+        return sign * number
 
     def parse_sign(self):
         if self.peek_consume('t'):
@@ -114,84 +116,132 @@ class Parser:
         name = ''
         while not self.peek('n'):
             name += self.parse_character()
-        consume('n')
+        self.consume('n')
         return name
 
     def parse_character(self):
         if self.peek_consume('t'):
             return 't'
-        consume('s')
+        self.consume('s')
         return 's'
 
 class VM:
-    def __init__(self, input_=''):
+    def __init__(self, program, input_=''):
+        self.program = program
+
+        self.input = input_
+        self.output = ''
+
         self.stack = []
         self.heap = {}
-        self.output = ''
         self.call_stack = []
-        self.input = input_
+        self.program_counter = 0
+        self.labels = {}
 
-    def dispatch(self, (instruction, param)):
-        pass
+        self.check_for_repeated_labels()
+
+    def check_for_repeated_labels(self):
+        labels = [params[0] for instruction, params in self.program
+                  if instruction == 'mark']
+        if len(set(labels)) != len(labels):
+            raise RuntimeError('Repeated labels.')
+
+    def run(self):
+        while self.program_counter < len(self.program):
+            command = self.program[self.program_counter]
+            if command.instruction == 'exit':
+                return
+            self.dispatch(command)
+            self.program_counter += 1
+
+        raise RuntimeError("Unclean termination.")
+
+    def dispatch(self, command):
+        instruction, params = command
+        getattr(self, instruction)(*params)
+
+    def find_label(self, label):
+        for i, (instruction, params) in enumerate(self.program):
+            if instruction == 'mark' and params[0] == label:
+                return i
+        raise ValueError
 
     def push(self, n):
-        self.stack.append(n) 
+        self.stack.append(n)
 
-    def duplicate(self, n):
-        if n:
-            self.stack.append(self.stack[-n])
-        else:
-            self.stack.append(self.stack[-1])
+    def duplicate(self):
+        self.stack.append(self.stack[-1])
+
+    def ref(self, n):
+        if n < 0:
+            raise ValueError
+        self.stack.append(self.stack[-n-1])
 
     def discard(self):
         self.stack.pop()
 
     def slide(self, n):
-        if n < 0 or n > len(self.stack):
-            self.stack[:-1] = []
+        if n < 0 or n >= len(self.stack):
+            self.stack = [self.stack.pop()]
         else:
             self.stack[-n - 1:-1] = []
 
     def swap(self):
-        self.stack[-2:] = self.stack[-2::-1]
-    
+        self.stack[-2:] = [self.stack[-1], self.stack[-2]]
+
     def infix(self, operator):
-        self.stack[-2:] = operator(self.stack[-2], self.stack[-1])
+        self.stack[-2:] = [operator(self.stack[-2], self.stack[-1])]
 
     def store(self):
-        self.heap[self.stack.pop()] = self.stack.pop()
+        n = self.stack.pop()
+        loc = self.stack.pop()
+        self.heap[loc] = n
 
     def retrieve(self):
-        self.stack.append(heap[self.stack.pop()])
+        n = self.stack.pop()
+        self.stack.append(self.heap[n])
 
     def output_char(self):
         self.output += chr(self.stack.pop())
 
     def output_num(self):
-        self.output += ord(self.stack.pop())
+        self.output += str(self.stack.pop())
 
     def read_char(self):
-        heap[self.stack.pop()] = chr(self.input[0])
+        self.heap[self.stack.pop()] = ord(self.input[0])
         self.input = self.input[1:]
 
     def read_num(self):
-        heap[self.stack.pop()] = self.input[0]
-        self.input = self.input[1:]
+        match = re.match('([0-9]+)\n', self.input)
+        self.heap[self.stack.pop()] = match.group(1)
+        self.input = self.input[len(match.group(0)):]
 
-    def label(self, label):
+    def mark(self, label):
         pass
 
-def whitespace(code, inp=''):
-    output = ''
-    stack = []
-    heap = {}
+    def call(self, label):
+        self.call_stack.append(self.program_counter)
+        self.program_counter = self.find_label(label)
 
+    def jump(self, label):
+        self.program_counter = self.find_label(label)
+
+    def if_(self, label, operator):
+        if operator(self.stack.pop(), 0):
+            self.jump(label)
+
+    def return_(self):
+        self.program_counter = self.call_stack.pop() 
+
+def whitespace(code, inp=''):
+    code = ''.join([t for t in code if t in ' \t\n'])
     tokens = code.replace(' ', 's').replace('\t', 't').replace('\n', 'n')
     parser = Parser(tokens)
-    for command, param in parser.parse():
-        print(command)
+    program = list(parser.parse())
+    vm = VM(program, inp)
+    vm.run()
 
-    return output
+    return vm.output
 
-code = "   \t\n\t\n \t\n\n\n"
-whitespace(code)
+def test_output():
+    assert whitespace('   \t\n\n \t \n   \t \n\n \t \n   \t\t\n\n \t \n\n\n\n\n   \n\t\n \t\n\t\n') == '123'
