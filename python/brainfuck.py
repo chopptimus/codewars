@@ -1,12 +1,13 @@
 import re
 
 INCP, DECP, INC, DEC, OUT, GET, FOR, BAC = [
-        '>', '<', '+', '-', '.', ',', '[', ']'
-    ]
+    '>', '<', '+', '-', '.', ',', '[', ']'
+]
 
 def tokenize(string):
-    tokens = re.findall('>|<|\+|-|.|,|[|]', string)
+    tokens = re.findall(r'>|<|\+|-|.|,|[|]', string)
     return tokens
+
 
 class VM:
     def __init__(self, program, input_):
@@ -16,7 +17,7 @@ class VM:
         self.data = [0] * 30000
         self.output = ''
         self.input = iter(input_)
-        
+
         self.create_bracemap()
 
     def create_bracemap(self):
@@ -60,7 +61,7 @@ class VM:
             if self.data[self.data_ptr] != 0:
                 self.instruction_ptr = self.bracemap[self.instruction_ptr]
         else:
-            awoijf
+            raise RuntimeError
 
 def brain_luck(code, input_):
     tokens = tokenize(code)
